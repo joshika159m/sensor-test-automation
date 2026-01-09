@@ -1,79 +1,44 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <math.h>
+const express = require("express");
+const fs = require("fs");
+const csv = require("csv-parser");
+const cors = require("cors");
 
-#define MIN_TEMP 20
-#define MAX_TEMP 80
-#define TOTAL_READINGS 10
-#define SPIKE_LIMIT 15.0
+const app = express();
+app.use(cors());
 
-struct Sensor {
-    int id;
-    float temperature;
-    int status;                 // 1 = PASS, 0 = FAIL
-    char reason[20];             // NONE, OUT_OF_RANGE, SPIKE
-};
+const CSV_PATH = "../sensor_data.csv";
 
-float generateTemperature() {
-    return (rand() % 100);       // 0–99
+function readCSV(callback) {
+  const results = [];
+  fs.createReadStream(CSV_PATH)
+    .pipe(csv())
+    .on("data", (data) => results.push(data))
+    .on("end", () => callback(results));
 }
 
-void evaluateSensor(struct Sensor *current, struct Sensor *previous) {
-    // Check range
-    if (current->temperature < MIN_TEMP || current->temperature > MAX_TEMP) {
-        current->status = 0;
-        sprintf(current->reason, "OUT_OF_RANGE");
-        return;
-    }
+app.get("/api/readings", (req, res) => {
+  readCSV((data) => res.json(data));
+});
 
-    // Check spike (if previous exists)
-    if (previous != NULL) {
-        float diff = fabs(current->temperature - previous->temperature);
-        if (diff > SPIKE_LIMIT) {
-            current->status = 0;
-            sprintf(current->reason, "SPIKE_DETECTED");
-            return;
-        }
-    }
+app.get("/api/alerts", (req, res) => {
+  readCSV((data) => {
+    const alerts = data.filter(r => r.Status === "FAIL");
+    res.json(alerts);
+  });
+});
 
-    // Otherwise pass
-    current->status = 1;
-    sprintf(current->reason, "NONE");
-}
+app.get("/api/summary", (req, res) => {
+  readCSV((data) => {
+    const total = data.length;
+    const failed = data.filter(r => r.Status === "FAIL").length;
+    res.json({
+      total_readings: total,
+      failures: failed,
+      pass_rate: ((total - failed) / total * 100).toFixed(2) + "%"
+    });
+  });
+});
 
-int main() {
-    struct Sensor sensors[TOTAL_READINGS];
-    FILE *file;
-
-    srand(time(NULL));
-
-    file = fopen("sensor_data.csv", "w");
-    if (file == NULL) {
-        printf("Error opening file\n");
-        return 1;
-    }
-
-    fprintf(file, "ID,Temperature,Status,Reason\n");
-
-    for (int i = 0; i < TOTAL_READINGS; i++) {
-        sensors[i].id = i + 1;
-        sensors[i].temperature = generateTemperature();
-
-        if (i == 0)
-            evaluateSensor(&sensors[i], NULL);
-        else
-            evaluateSensor(&sensors[i], &sensors[i - 1]);
-
-        fprintf(file, "%d,%.2f,%s,%s\n",
-                sensors[i].id,
-                sensors[i].temperature,
-                sensors[i].status ? "PASS" : "FAIL",
-                sensors[i].reason);
-    }
-
-    fclose(file);
-
-    printf("Sensor data with spike detection written to sensor_data.csv\n");
-    return 0;
-}
+app.listen(5000, () => {
+  console.log("Backend running on http://localhost:5000");
+});
